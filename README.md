@@ -14,6 +14,12 @@ tools/pull_log.sh                  # лог -> logs/phone.log
 tools/make_release.sh              # release/<версия>/: APK с release-ключом, исходники, INSTALL.txt, SHA256SUMS
 ```
 
+## 💳 Поддержка проекта
+
+Если вам нравится проект и вы хотите поддержать разработку:
+
+👉 **[Отправить чаевые через CloudTips](https://pay.cloudtips.ru/p/cad77257)**
+
 ## Файлы игры
 
 Нужны два файла: APK игры **1.0.1** (`com.gameloft.android.GAND.GloftM3HP`) и кэш к нему — zip-архив
