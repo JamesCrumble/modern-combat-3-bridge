@@ -23,7 +23,7 @@
 unzip -l gamebin/<игра>.apk | grep -v res/
 readelf -hd lib.so | grep -E 'NEEDED|SONAME'
 readelf --dyn-syms -W lib.so | awk '$7=="UND"{print $8}' | sort > extracted/v101/imports.txt
-android-sdk/build-tools/34.0.0/dexdump -d classes.dex > extracted/v101/classes.txt
+$ANDROID_HOME/build-tools/34.0.0/dexdump -d classes.dex > extracted/v101/classes.txt
 strings -n 6 lib.so > extracted/v101/strings.txt
 ```
 
