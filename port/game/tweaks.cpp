@@ -25,6 +25,26 @@
 
 #include "mc3.h"
 
+/* Code that may already have been translated: make the page writable first (qemu then drops its
+ * translations), and say if that failed instead of faulting on the store. Storing into a translated
+ * page without this relies on qemu's write-fault path for self-modifying code, and on some phones
+ * that store is delivered to the guest as SIGSEGV instead (0.1: fault at +0x77fa00, the first kuser
+ * literal, on a Mali-G57 device). */
+static bool code_write(so_module *mod, uintptr_t off, const uint32_t *words, int n, const char *what)
+{
+    uintptr_t at = mod->text_base + off, page = at & ~(uintptr_t)4095;
+    if (mprotect((void *)page, ((at + 4u * n - page) + 4095) & ~(uintptr_t)4095, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        trace("tweaks: %s: mprotect at +0x%lx failed (errno %d)", what, (unsigned long)off, errno);
+        return false;
+    }
+    memcpy((void *)at, words, 4u * n);
+    __builtin___clear_cache((char *)at, (char *)(at + 4u * n));
+    return true;
+}
+
+/* Run from so_after_relocate(), before the module's first instruction: no page of it has been
+ * translated yet, so nothing has to be invalidated (atomics in the static initializers and in
+ * JNI_OnLoad already use the routine). Each store still goes through code_write(). */
 static void install_fast_cas(so_module *mod)
 {
     /* kuser cmpxchg: r0 = old, r1 = new, r2 = ptr; returns r0 = 0 when it stored. */
@@ -45,15 +65,20 @@ static void install_fast_cas(so_module *mod)
         return;
     }
     memcpy(page, code, sizeof(code));
-    uint32_t *w = (uint32_t *)mod->text_base;
-    size_t n = mod->text_size / 4, hits = 0;
+    __builtin___clear_cache((char *)page, (char *)page + sizeof(code));
+    const uint32_t *w = (const uint32_t *)mod->text_base;
+    const uint32_t target = (uint32_t)(uintptr_t)page;
+    size_t n = mod->text_size / 4, hits = 0, failed = 0;
     for (size_t i = 0; i < n; i++) {
-        if (w[i] == 0xffff0fc0u) {
-            w[i] = (uint32_t)(uintptr_t)page;
+        if (w[i] != 0xffff0fc0u)
+            continue;
+        if (code_write(mod, 4u * i, &target, 1, "fast cas"))
             hits++;
-        }
+        else
+            failed++;
     }
-    trace("tweaks: kuser cmpxchg literal replaced at %zu places (routine %p)", hits, page);
+    trace("tweaks: kuser cmpxchg literal replaced at %zu places (routine %p)%s", hits, page,
+          failed ? ", some left as they were" : "");
 }
 
 /*
@@ -147,20 +172,6 @@ static bool code_is(so_module *mod, uintptr_t off, const uint32_t *words, int n)
     return memcmp((const void *)(mod->text_base + off), words, 4u * n) == 0;
 }
 
-/* Code that may already have been translated: make the page writable first (qemu then drops its
- * translations), and say if that failed instead of faulting on the store. */
-static bool code_write(so_module *mod, uintptr_t off, const uint32_t *words, int n)
-{
-    uintptr_t at = mod->text_base + off, page = at & ~(uintptr_t)4095;
-    if (mprotect((void *)page, ((at + 4u * n - page) + 4095) & ~(uintptr_t)4095, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        trace("tweaks: money: mprotect at +0x%lx failed (errno %d)", (unsigned long)off, errno);
-        return false;
-    }
-    memcpy((void *)at, words, 4u * n);
-    __builtin___clear_cache((char *)at, (char *)(at + 4u * n));
-    return true;
-}
-
 static void install_money(so_module *mod)
 {
     long restore = port_getenv_long("MONEY_RESTORE", -1);
@@ -177,7 +188,7 @@ static void install_money(so_module *mod)
     if (infinite) {
         const uint32_t get[3] = { 0xe59f0000u /* ldr r0, [pc, #0] */, 0xe12fff1eu /* bx lr */, (uint32_t)kMoneyInfinite };
         const uint32_t rem[1] = { 0xe12fff1eu /* bx lr */ };
-        if (code_write(mod, kCreditsGet, get, 3) && code_write(mod, kCreditsRemove, rem, 1))
+        if (code_write(mod, kCreditsGet, get, 3, "money") && code_write(mod, kCreditsRemove, rem, 1, "money"))
             trace("tweaks: money: infinite (%d), spending takes nothing", kMoneyInfinite);
         return;
     }
@@ -209,11 +220,14 @@ static void money_tick(long frames)
     g_money_restore = -1;
 }
 
-void mc3_tweaks_install(so_module *mod)
+void mc3_tweaks_install_early(so_module *mod)
 {
     if (port_getenv_long("FAST_CAS", 1))
         install_fast_cas(mod);
+}
 
+void mc3_tweaks_install(so_module *mod)
+{
     install_money(mod);
 
     if (port_getenv_long("SLEEP_TRACE", 0)) {

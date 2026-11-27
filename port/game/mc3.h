@@ -34,7 +34,10 @@ void mc3_unlock_drm(so_module *mod);
 /* Shows the frame the engine has finished (after every step, as GLSurfaceView does). main.cpp */
 void mc3_present(void);
 
-/* Engine settings forced over the device profile. tweaks.cpp */
+/* Code patches that must be in place before any of the module runs (the kuser cmpxchg literals):
+ * from so_after_relocate(). tweaks.cpp */
+void mc3_tweaks_install_early(so_module *mod);
+/* Engine settings forced over the device profile, after JNI_OnLoad. tweaks.cpp */
 void mc3_tweaks_install(so_module *mod);
 /* Once per frame: the frame-rate target and the scheduler's clamp on the main thread. tweaks.cpp */
 void mc3_sched_tick(long frames);

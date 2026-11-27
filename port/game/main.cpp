@@ -166,6 +166,11 @@ extern "C" int so_after_relocate(so_module *mod)
      * See game/patch.cpp. */
     mc3_unlock_drm(mod);
 
+    /* The kuser cmpxchg literals, while no page of the module has been translated: patching them
+     * after JNI_OnLoad stored into pages qemu had write-protected for its translations, and on
+     * some phones that store came back as SIGSEGV (+0x77fa00). See game/tweaks.cpp. */
+    mc3_tweaks_install_early(mod);
+
     int missing = report_unresolved_symbols(mod);
     if (missing == 0)
         return 0;
